@@ -1,3 +1,4 @@
+![demo](imp.png)
 # rusm
 
 An assembly REPL. Type x86-64 instructions and watch the registers, flags and
