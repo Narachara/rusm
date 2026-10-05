@@ -1,183 +1,93 @@
-# rappel
+# rusm
 
-[![Build Status](https://dev.azure.com/yrp604/rappel/_apis/build/status/yrp604.rappel?branchName=master)](https://dev.azure.com/yrp604/rappel/_build/latest?definitionId=1&branchName=master)
+An assembly REPL. Type x86-64 instructions and watch the registers, flags and
+memory change after every line. `rusm` works by building a tiny ELF, running it
+under `ptrace`, and rewriting and re-running its `.text` section as you go.
 
-Rappel is a pretty janky assembly REPL. It works by creating a shell ELF, starting it under ptrace, then continiously rewriting/running the `.text` section, while showing the register states. It's maybe half done right now, and supports Linux x86, amd64, armv7 (no thumb), and armv8 at the moment.
+It is a Rust port of [yrp604's rappel](https://github.com/yrp604/rappel). The
+original C sources are kept under [`legacy/`](legacy/) for reference.
 
-* If you're looking for a Windows version, please see [@zerosum0x0](https://twitter.com/zerosum0x0)'s [WinREPL](https://github.com/zerosum0x0-archive/archive/raw/main/WinREPL-master.zip) (archived)
-* If you're looking for a macOS version, please see [@tyilol](https://twitter.com/tyilol)'s [asm_repl](https://github.com/Tyilo/asm_repl)
-* If you're looking for a hacked together with gdb and Python version, please see amtal's [rappel.py](https://gist.github.com/amtal/c457176af7f8770e0ad519aadc86013c/)
+Currently supports **Linux x86-64**. The architecture backend is pluggable
+(see [`src/arch/`](src/arch/)), so other targets can be added later.
 
 ## Install
 
-The only dependencies are `libedit` and an assembler (`nasm` on x86/amd64, `as` on ARM) , which on Debian can be installed with the `libedit-dev` and `nasm`/`binutils` packages. Please note, as `rappel` requires the ability to write to executable memory via `ptrace`, the program is broken under `PAX_MPROTECT` on grsec kernels (see [#2](https://github.com/yrp604/rappel/issues/2)).
+You need a Rust toolchain and `nasm` (the only assembler backend so far). On
+Debian/Kali/Ubuntu:
 
 ```
-$ CC=clang make
+$ sudo apt install nasm
+$ cargo build --release
 ```
 
-It should work fine with `gcc`, albeit with a few more warnings.
+The binary lands at `target/release/rusm`.
 
-By default rappel is compiled with your native architecture. If you're on amd64 and want to target x86 you can do this with
+Because `rusm` writes to executable memory via `ptrace`, it will not work under
+hardened kernels that forbid this (e.g. `PAX_MPROTECT` on grsec).
+
+## Usage
+
+`rusm` has three modes.
+
+**Notebook UI** (the default when run in a terminal). Each cell is a snippet;
+the machine state after it runs is shown beside it, and you can edit, delete or
+replay cells. Press `F1` for the full key reference.
 
 ```
-$ ARCH=x86 CC=clang make
+$ rusm                 # fresh session
+$ rusm session.asm     # open/save a notebook (cells split by ";; %%")
 ```
 
-In theory you can also compile an armv7 binary this way, but I really doubt it will work. For rappel to function, the architecture of the main rappel binary must match that of the process it creates, and the host must be able to run binaries of this architecture.
+Selected keys: `Enter` run a cell · `Ctrl+J` new line · `Ctrl+R` run block ·
+`Tab` move focus between editor / memory / cells · `F2` all registers ·
+`F3` memory maps · `F5` replay all · `Ctrl+Q` quit.
 
-## Running
-
-Rappel has two modes it can operate in. A pipe mode for one off things, a la
+**Plain REPL** (`--plain`), a line-based interface with `.`-commands
+(`.help`, `.regs`, `.read`, `.write`, `.maps`, `.begin`/`.end`, …):
 
 ```
-$ echo "inc eax" | bin/rappel
+$ rusm --plain
+> inc rax
+rax=0000000000000001 rbx=0000000000000000 ...
+```
+
+**Pipe mode** (when stdin is not a terminal), for one-off snippets:
+
+```
+$ echo "inc eax" | rusm
 rax=0000000000000001 rbx=0000000000000000 rcx=0000000000000000
 rdx=0000000000000000 rsi=0000000000000000 rdi=0000000000000000
 rip=0000000000400004 rsp=00007ffc73019c20 rbp=0000000000000000
- r8=0000000000000000  r9=0000000000000000 r10=0000000000000000
-r11=0000000000000000 r12=0000000000000000 r13=0000000000000000
-r14=0000000000000000 r15=0000000000000000
-[cf:0, zf:0, of:0, sf:0, pf:0, af:0, df:0]
-cs=0033  ss=002b  ds=0000  es=0000  fs=0000  gs=0000            efl=00000202
-$
+...
 ```
 
-Or an interactive mode:
+## Features
+
+- **Persistent state** — registers and memory carry over between cells.
+- **Data and bss** — switch to `section .data`, `.rodata` or `.bss` in a cell
+  to declare memory; labels stay visible to later cells. Address it
+  RIP-relative, e.g. `lea rsi, [rel msg]`.
+- **Labels across cells** — `call strlen`, `jmp cell2`; definition-only cells
+  start with `;; def`.
+- **Real syscalls** — `write`, `openat`, etc. run for real and `rax` holds the
+  result. `execve` is decoded and shown but not run (there is no shell to host).
+- **stdin to the program** — `.input TEXT` in the REPL, or `;; stdin: TEXT` /
+  `;; eof` directives in a notebook; reads that block are detected and resumed.
+- **Disassembly** (`-d`), **all registers** (`-x`), adjustable **timeout** for
+  runaway loops, optional **ASLR** (`--aslr`), and saving the generated
+  executable (`--save FILE`).
+
+Run `rusm --help` for every flag.
+
+## Development
 
 ```
-$ bin/rappel
-rax=0000000000000000 rbx=0000000000000000 rcx=0000000000000000
-rdx=0000000000000000 rsi=0000000000000000 rdi=0000000000000000
-rip=0000000000400001 rsp=00007ffdedb264a0 rbp=0000000000000000
- r8=0000000000000000  r9=0000000000000000 r10=0000000000000000
-r11=0000000000000000 r12=0000000000000000 r13=0000000000000000
-r14=0000000000000000 r15=0000000000000000
-[cf:0, zf:0, of:0, sf:0, pf:0, af:0, df:0]
-cs=0033  ss=002b  ds=0000  es=0000  fs=0000  gs=0000            efl=00000202
-> inc rax
-rax=0000000000000001 rbx=0000000000000000 rcx=0000000000000000
-rdx=0000000000000000 rsi=0000000000000000 rdi=0000000000000000
-rip=0000000000400004 rsp=00007ffdedb264a0 rbp=0000000000000000
- r8=0000000000000000  r9=0000000000000000 r10=0000000000000000
-r11=0000000000000000 r12=0000000000000000 r13=0000000000000000
-r14=0000000000000000 r15=0000000000000000
-[cf:0, zf:0, of:0, sf:0, pf:0, af:0, df:0]
-cs=0033  ss=002b  ds=0000  es=0000  fs=0000  gs=0000            efl=00000202
-> push rax
-rax=0000000000000001 rbx=0000000000000000 rcx=0000000000000000
-rdx=0000000000000000 rsi=0000000000000000 rdi=0000000000000000
-rip=0000000000400002 rsp=00007ffdedb26498 rbp=0000000000000000
- r8=0000000000000000  r9=0000000000000000 r10=0000000000000000
-r11=0000000000000000 r12=0000000000000000 r13=0000000000000000
-r14=0000000000000000 r15=0000000000000000
-[cf:0, zf:0, of:0, sf:0, pf:0, af:0, df:0]
-cs=0033  ss=002b  ds=0000  es=0000  fs=0000  gs=0000            efl=00000202
-> pop rbx
-rax=0000000000000001 rbx=0000000000000001 rcx=0000000000000000
-rdx=0000000000000000 rsi=0000000000000000 rdi=0000000000000000
-rip=0000000000400002 rsp=00007ffdedb264a0 rbp=0000000000000000
- r8=0000000000000000  r9=0000000000000000 r10=0000000000000000
-r11=0000000000000000 r12=0000000000000000 r13=0000000000000000
-r14=0000000000000000 r15=0000000000000000
-[cf:0, zf:0, of:0, sf:0, pf:0, af:0, df:0]
-cs=0033  ss=002b  ds=0000  es=0000  fs=0000  gs=0000            efl=00000202
-> cmp rax, rbx
-rax=0000000000000001 rbx=0000000000000001 rcx=0000000000000000
-rdx=0000000000000000 rsi=0000000000000000 rdi=0000000000000000
-rip=0000000000400004 rsp=00007ffdedb264a0 rbp=0000000000000000
- r8=0000000000000000  r9=0000000000000000 r10=0000000000000000
-r11=0000000000000000 r12=0000000000000000 r13=0000000000000000
-r14=0000000000000000 r15=0000000000000000
-[cf:0, zf:1, of:0, sf:0, pf:1, af:0, df:0]
-cs=0033  ss=002b  ds=0000  es=0000  fs=0000  gs=0000            efl=00000246
-> ^D
-$
+$ cargo test       # unit + integration tests (requires nasm)
+$ cargo clippy --all-targets
+$ cargo fmt
 ```
 
-x86 looks like:
-```
-$ echo "nop" | bin/rappel
-eax=00000000 ebx=00000000 ecx=00000000 edx=00000000 esi=00000000 edi=00000000
-eip=00400002 esp=ffc67240 ebp=00000000 [cf:0, zf:0, of:0, sf:0, pf:0, af:0, df:0]
-cs=0023  ss=002b  ds=002b  es=002b  fs=0000  gs=0000            efl=00000202
-$
-```
+## License
 
-ARMv7 looks like:
-```
-$ echo "nop" | bin/rappel
-R0 :0x00000000	R1 :0x00000000	R2 :0x00000000	R3 :0x00000000
-R4 :0x00000000	R5 :0x00000000	R6 :0x00000000	R7 :0x00000000
-R8 :0x00000000	R9 :0x00000000	R10:0x00000000
-FP :0x00000000	IP :0x00000000
-SP :0xbe927f30	LR :0x00000000	PC :0x00400004
-APSR:0x00000010
-$
-```
-
-ARMv8 looks like:
-```
-$ echo "nop" | bin/rappel
-X0:  0x0000000000000000	X1:  0x0000000000000000	X2:  0x0000000000000000	X3:  0x0000000000000000
-X4:  0x0000000000000000	X5:  0x0000000000000000	X6:  0x0000000000000000	X7:  0x0000000000000000
-X8:  0x0000000000000000	X9:  0x0000000000000000	X10: 0x0000000000000000	X11: 0x0000000000000000
-X12: 0x0000000000000000	X13: 0x0000000000000000	X14: 0x0000000000000000	X15: 0x0000000000000000
-X16: 0x0000000000000000	X17: 0x0000000000000000	X18: 0x0000000000000000	X19: 0x0000000000000000
-X20: 0x0000000000000000	X21: 0x0000000000000000	X22: 0x0000000000000000	X23: 0x0000000000000000
-X24: 0x0000000000000000	X25: 0x0000000000000000	X26: 0x0000000000000000	X27: 0x0000000000000000
-X28: 0x0000000000000000	X29: 0x0000000000000000	X30: 0x0000000000000000
-PC:  0x0000000000400004	SP:  0x0000007fedb9be40	PS:  0x0000000000000000
-```
-
-## Notes
-Someone asked about xmm registers. If you pass `-x` it will dump out quite a bit of info.
-
-```
-GP Regs:
-rax=0000000000000000 rbx=0000000000000000 rcx=0000000000000000
-rdx=0000000000000000 rsi=0000000000000000 rdi=0000000000000000
-rip=0000000000400001 rsp=00007ffca03d9370 rbp=0000000000000000
- r8=0000000000000000  r9=0000000000000000 r10=0000000000000000
-r11=0000000000000000 r12=0000000000000000 r13=0000000000000000
-r14=0000000000000000 r15=0000000000000000
-[cf:0, zf:0, of:0, sf:0, pf:0, af:0, df:0]
-cs=0033  ss=002b  ds=0000  es=0000  fs=0000  gs=0000            efl=00000202
-FP Regs:
-rip: 0000000000000000   rdp: 0000000000000000   mxcsr: 00001f80 mxcsr_mask:0000ffff
-cwd: 037f       swd: 0000       ftw: 0000       fop: 0000
-st_space:
-0x00:   00000000        00000000        00000000        00000000
-0x10:   00000000        00000000        00000000        00000000
-0x20:   00000000        00000000        00000000        00000000
-0x30:   00000000        00000000        00000000        00000000
-0x40:   00000000        00000000        00000000        00000000
-0x50:   00000000        00000000        00000000        00000000
-0x60:   00000000        00000000        00000000        00000000
-0x70:   00000000        00000000        00000000        00000000
-xmm_space:
-0x00:   00000000        00000000        00000000        00000000
-0x10:   00000000        00000000        00000000        00000000
-0x20:   00000000        00000000        00000000        00000000
-0x30:   00000000        00000000        00000000        00000000
-0x40:   00000000        00000000        00000000        00000000
-0x50:   00000000        00000000        00000000        00000000
-0x60:   00000000        00000000        00000000        00000000
-0x70:   00000000        00000000        00000000        00000000
-0x80:   00000000        00000000        00000000        00000000
-0x90:   00000000        00000000        00000000        00000000
-0xa0:   00000000        00000000        00000000        00000000
-0xb0:   00000000        00000000        00000000        00000000
-0xc0:   00000000        00000000        00000000        00000000
-0xd0:   00000000        00000000        00000000        00000000
-0xe0:   00000000        00000000        00000000        00000000
-0xf0:   00000000        00000000        00000000        00000000
-```
-
-There are some other regsets the kernel exports via ptrace(), but they're dependent on kernel version, and I didn't want to try to detect and adjust at runtime. If you want them, you should just need to add the storage in `proc_info_t`, edit `ptrace_collect_regs_<arch>()`, then add the display in the relevant `display` function.
-
-Right now supported platforms are determined by what hardware I own. Adding a new architecture shouldn't be too difficult, as most of the code can be adapted from existing archs.
-
-## Docs
-
-You can get pretty much all the documentation with either `-h` from the command line, or `.help` from the interactive bit.
+Same terms as the original rappel; see [LICENSE](LICENSE). Original C
+implementation © 2016 yrp; Rust port © 2026 Narachara.

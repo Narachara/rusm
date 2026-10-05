@@ -37,3 +37,6 @@ peda-session-*
 
 # bin
 bin/*
+
+# Rust / cargo
+/target

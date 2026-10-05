@@ -1,4 +1,8 @@
-Copyright (c) 2016 yrp. All rights reserved.
+Copyright (c) 2016 yrp (original rappel C implementation)
+Copyright (c) 2026 Narachara (rusm, the Rust port)
+
+rusm is a Rust port of rappel (https://github.com/yrp604/rappel) and is
+distributed under the same terms as the original.
 
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
@@ -11,7 +15,7 @@ this list of conditions and the following disclaimer in the documentation
 and/or other materials provided with the distribution.
 
 3. All advertising materials mentioning features or use of this software must
-display the following acknowledgement:  
+display the following acknowledgement:
 "¯\_(ツ)_/¯"
 
 4. Neither the name of the copyright holder nor the names of its contributors
